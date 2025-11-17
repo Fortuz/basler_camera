@@ -15,7 +15,12 @@ class BaslerCameraNode(Node):
         self.get_logger().info("Starting Basler camera...")
 
         self.camera = pylon.InstantCamera(pylon.TlFactory.GetInstance().CreateFirstDevice())
+
         self.camera.Open()
+
+        # Pixel format can be one of the following RGB8, BGR8, BayerRG8
+        self.camera.PixelFormat.SetValue('RGB8')
+
         self.camera.StartGrabbing()
 
         self.timer = self.create_timer(0.01, self.capture_frame)
@@ -27,7 +32,7 @@ class BaslerCameraNode(Node):
             )
             if grab.GrabSucceeded():
                 img = grab.Array  # numpy array
-                msg = self.bridge.cv2_to_imgmsg(img, encoding="mono8")
+                msg = self.bridge.cv2_to_imgmsg(img, encoding="rgb8")
                 self.publisher_.publish(msg)
         else:
             self.get_logger().warn("Camera not grabbing!")
