@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'basler_camera = basler_camera.camera_node:main',
+            'calibration_node = basler_camera.calibration_node:main',
         ],
     },
 )
