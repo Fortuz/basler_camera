@@ -16,6 +16,14 @@ class BaslerCameraNode(Node):
 
         self.camera = pylon.InstantCamera(pylon.TlFactory.GetInstance().CreateFirstDevice())
         self.camera.Open()
+
+        # FORCE COLOR MODE (RGB8)
+        try:
+            self.camera.PixelFormat.SetValue("RGB8")
+            self.get_logger().info("Pixel format set to RGB8")
+        except Exception as e:
+            self.get_logger().warn(f"Could not set RGB8 format: {e}")
+
         self.camera.StartGrabbing()
 
         self.timer = self.create_timer(0.01, self.capture_frame)
@@ -26,8 +34,13 @@ class BaslerCameraNode(Node):
                 5000, pylon.TimeoutHandling_ThrowException
             )
             if grab.GrabSucceeded():
-                img = grab.Array  # numpy array
-                msg = self.bridge.cv2_to_imgmsg(img, encoding="mono8")
+                img = grab.Array  # numpy array in BGR format
+
+                # CONVERT BGR → RGB
+                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+                # Publish as rgb8
+                msg = self.bridge.cv2_to_imgmsg(img_rgb, encoding="rgb8")
                 self.publisher_.publish(msg)
         else:
             self.get_logger().warn("Camera not grabbing!")
@@ -41,3 +54,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
