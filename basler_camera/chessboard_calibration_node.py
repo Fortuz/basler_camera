@@ -14,9 +14,9 @@ class ChessboardCalibrationNode(Node):
         self.declare_parameter("topic", "/camera/image_color")
         self.declare_parameter("save_path", "camera_calibration.yaml")
         self.declare_parameter("samples_required", 20)  # More samples for better calibration
-        self.declare_parameter("chessboard_rows", 6)    # Internal corners
-        self.declare_parameter("chessboard_cols", 9)    # Internal corners
-        self.declare_parameter("square_size", 25.0)     # Size in mm
+        self.declare_parameter("chessboard_rows", 9)    # Internal corners
+        self.declare_parameter("chessboard_cols", 8)    # Internal corners
+        self.declare_parameter("square_size", 50.0)     # Size in mm
 
         self.topic = self.get_parameter("topic").value
         self.save_path = self.get_parameter("save_path").value
