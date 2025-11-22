@@ -20,7 +20,7 @@ class YoloNode(Node):
         self.bridge = CvBridge()
 
         # Load camera calibration
-        self.declare_parameter("calibration_file", "manual_camera.yaml")
+        self.declare_parameter("calibration_file", "calibration.yaml")
         self.calibration_file = self.get_parameter("calibration_file").value
         self.camera_matrix = None
         self.dist_coeffs = None
@@ -42,11 +42,21 @@ class YoloNode(Node):
                 with open(self.calibration_file, 'r') as f:
                     calib_data = yaml.safe_load(f)
                 
-                self.camera_matrix = np.array(calib_data['camera_matrix'], dtype=np.float32)
-                self.dist_coeffs = np.array(calib_data['distortion_coefficients'], dtype=np.float32)
+                # Handle new ROS camera_info format from Zhang's calibration
+                if 'camera_matrix' in calib_data and isinstance(calib_data['camera_matrix'], dict):
+                    # New format with rows, cols, data structure
+                    camera_data = calib_data['camera_matrix']['data']
+                    self.camera_matrix = np.array(camera_data, dtype=np.float32).reshape(3, 3)
+                    
+                    distortion_data = calib_data['distortion_coefficients']['data']
+                    self.dist_coeffs = np.array(distortion_data, dtype=np.float32)
+                else:
+                    # Old format - direct arrays
+                    self.camera_matrix = np.array(calib_data['camera_matrix'], dtype=np.float32)
+                    self.dist_coeffs = np.array(calib_data['distortion_coefficients'], dtype=np.float32)
                 
                 self.get_logger().info(f"Loaded calibration from {self.calibration_file}")
-                self.get_logger().info(f"Camera matrix: {self.camera_matrix}")
+                self.get_logger().info(f"Camera matrix:\n{self.camera_matrix}")
                 self.get_logger().info(f"Distortion coeffs: {self.dist_coeffs}")
             else:
                 self.get_logger().warn(f"Calibration file {self.calibration_file} not found. Running without undistortion.")

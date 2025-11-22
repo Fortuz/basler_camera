@@ -25,22 +25,26 @@ class ManualCalibrationNode(Node):
         self.subscription = self.create_subscription(Image, self.topic, self.image_callback, 10)
 
         # Calibration data
-        self.imgpoints_list = []  # 2D points clicked
-        self.objpoints_list = []  # 3D points (world)
-        self.click_points = []    # current frame clicks
+        self.captured_images = []
         self.sample_count = 0
         self.image_size = None
+        self.chessboard_dim = (9, 10)
+        self.cell_size = 0.025  # 25mm squares
 
         # GUI setup
-        cv2.namedWindow("Manual Calibration")
-        cv2.setMouseCallback("Manual Calibration", self.mouse_callback)
+        cv2.namedWindow("Zhang Calibration")
 
-        self.get_logger().info("Manual calibration node started. Click points in the GUI and press 'n' to save each sample.")
+        self.get_logger().info("Zhang calibration node started. Press 'n' to capture chessboard images.")
 
-    def mouse_callback(self, event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            self.click_points.append((x, y))
-            self.get_logger().info(f"Clicked point: {x},{y}")
+
+    def get_corner_chessboard(self, image, chessboard_dim):
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        ret, corners = cv2.findChessboardCorners(gray, chessboard_dim, None)
+        if ret:
+            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+            corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
+            return corners.reshape(-1, 2)
+        return None
 
     def image_callback(self, msg: Image):
         # Convert ROS Image to NumPy array
@@ -48,71 +52,182 @@ class ManualCalibrationNode(Node):
         if self.image_size is None:
             self.image_size = (msg.width, msg.height)
 
-        # Draw persistent clicked points
+        # Check for chessboard
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        ret, corners = cv2.findChessboardCorners(gray, self.chessboard_dim, None)
+        
+        # Display image
         display_img = img.copy()
-        for idx, (x, y) in enumerate(self.click_points):
-            cv2.circle(display_img, (x, y), 5, (0, 255, 0), -1)  # green circle
-            cv2.putText(display_img, str(idx+1), (x+5, y-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        if ret:
+            cv2.drawChessboardCorners(display_img, self.chessboard_dim, corners, ret)
+            cv2.putText(display_img, f"Chessboard detected! Press 'n' to capture ({self.sample_count}/{self.samples_required})", 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        else:
+            cv2.putText(display_img, f"No chessboard detected ({self.sample_count}/{self.samples_required})", 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-        cv2.imshow("Manual Calibration", display_img)
+        cv2.imshow("Zhang Calibration", display_img)
         key = cv2.waitKey(1) & 0xFF
 
-        # Save sample
-        if key == ord('n'):
-            if len(self.click_points) < self.min_points:
-                self.get_logger().warn(f"Please click at least {self.min_points} points before saving.")
-                return
-
-            # Generate corresponding 3D object points (z=0)
-            objpoints = []
-            for pt in self.click_points:
-                x_world, y_world = float(pt[0]), float(pt[1])  # replace with actual world coords if known
-                objpoints.append([x_world, y_world, 0.0])
-            objpoints = np.array(objpoints, dtype=np.float32)
-
-            self.objpoints_list.append(objpoints)
-            self.imgpoints_list.append(np.array(self.click_points, dtype=np.float32))
+        # Capture image
+        if key == ord('n') and ret:
+            self.captured_images.append(img.copy())
             self.sample_count += 1
-            self.get_logger().info(f"Saved sample {self.sample_count}/{self.samples_required}")
-
-            # Clear points for next frame
-            self.click_points = []
-
-            # Auto-calibrate if enough samples
+            self.get_logger().info(f"Captured image {self.sample_count}/{self.samples_required}")
+            
             if self.sample_count >= self.samples_required:
-                self.calibrate()
+                self.run_calibration()
                 rclpy.shutdown()
+        elif key == ord('n') and not ret:
+            self.get_logger().warn("No chessboard detected!")
 
         # Quit
         elif key == ord('q'):
-            self.get_logger().info("Exiting manual calibration.")
             cv2.destroyAllWindows()
             rclpy.shutdown()
 
-    def calibrate(self):
-        self.get_logger().info("Calibrating camera from manual points...")
-        ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
-            self.objpoints_list, self.imgpoints_list, self.image_size, None, None
-        )
+    def fill_X(self, chessboard_dim, cell_size):
+        # Initialize the array for storing the world coordinates
+        X = np.zeros((chessboard_dim[0] * chessboard_dim[1], 3), np.float32)
 
-        if not ret:
-            self.get_logger().error("Calibration failed.")
+        # Fill X with the world coordinates in the correct order
+        for i in range(chessboard_dim[0]):  # Number of columns
+            for j in range(chessboard_dim[1]):  # Number of rows
+                index = j * chessboard_dim[0] + i
+                X[index] = [i * cell_size, j * cell_size, 0]
+        return X
+
+    def reproj_error(self, X, U, H):
+        X_homogeneous = np.hstack((X[:,:2], np.ones((X.shape[0], 1))))
+        U_projected_homogeneous = np.dot(H, X_homogeneous.T).T
+        U_projected = U_projected_homogeneous[:, :2] / U_projected_homogeneous[:, 2, np.newaxis]
+
+        error = np.sqrt(np.mean((U - U_projected) ** 2))
+        self.get_logger().info(f'Reprojection error: {error:.4f}')
+        return error
+
+    def zhangs_method_calibration(self):
+        X = self.fill_X(self.chessboard_dim, self.cell_size)
+        H_list = []
+        
+        for i, image in enumerate(self.captured_images):
+            U = self.get_corner_chessboard(image, self.chessboard_dim)
+            if U is None:
+                self.get_logger().warn(f"Could not find corners in image {i+1}")
+                continue
+            
+            A = []
+            for j in range(len(X)):
+                x, y, _ = X[j]
+                u, v = U[j]
+                
+                z = 1
+                w = 1
+                A.append([0, 0, 0, -w*x, -w*y, -w*z, v*x, v*y, v*z])
+                A.append([w*x, w*y, w*z, 0, 0, 0, -u*x, -u*y, -u*z])
+            
+            A = np.array(A)
+            
+            eigenvalues, eigenvectors = np.linalg.eig(np.dot(A.T, A))
+            h = eigenvectors[:, np.argmin(eigenvalues)]
+            
+            H = h.reshape(3, 3)
+            H = H / H[2, 2]
+
+            error = self.reproj_error(X, U, H)
+            H_list.append(H)
+            
+        return H_list
+
+    def compute_intrinsics(self, H_list):
+
+        V = []
+        for H in H_list:
+            V.append(np.array([
+                H[0, 0]*H[0, 1], H[0, 0]*H[1, 1] + H[1, 0]*H[0, 1],
+                H[1, 0]*H[1, 1], H[2, 0]*H[0, 1] + H[0, 0]*H[2, 1],
+                H[2, 0]*H[1, 1] + H[1, 0]*H[2, 1], H[2, 0]*H[2, 1]
+            ]))
+            V.append(np.array([
+                H[0, 0]*H[0, 0] - H[0, 1]*H[0, 1], 2*(H[0, 0]*H[1, 0] - H[0, 1]*H[1, 1]),
+                H[1, 0]*H[1, 0] - H[1, 1]*H[1, 1], 2*(H[2, 0]*H[0, 0] - H[2, 1]*H[0, 1]),
+                2*(H[2, 0]*H[1, 0] - H[2, 1]*H[1, 1]), H[2, 0]*H[2, 0] - H[2, 1]*H[2, 1]
+            ]))
+
+        V = np.array(V)
+        _, _, vh = np.linalg.svd(V)
+        b = vh[-1] / vh[-1, -1]
+
+        v0 = (b[1]*b[3] - b[0]*b[4]) / (b[0]*b[2] - b[1]**2)
+        lambda_ = b[5] - (b[3]**2 + v0*(b[1]*b[3] - b[0]*b[4])) / b[0]
+        alpha = np.sqrt(lambda_ / b[0])
+        beta = np.sqrt(lambda_ * b[0] / (b[0]*b[2] - b[1]**2))
+        gamma = -b[1] * alpha**2 * beta / lambda_
+        u0 = gamma * v0 / beta - b[3] * alpha**2 / lambda_
+
+        K = np.array([
+            [alpha, gamma, u0],
+            [0,     beta,  v0],
+            [0,     0,     1]
+        ])
+
+        return K
+
+    def get_r_t_vec(self, K, H_list):
+        r1r2t = np.linalg.inv(K)@H_list[0]
+        r1 = r1r2t[:,0]
+        r2 = r1r2t[:,1]
+        r3 = np.cross(r1,r2)
+        t = r1r2t[:,2]
+        return (r1,r2,r3,t)
+
+    def run_calibration(self):
+        self.get_logger().info("Running Zhang's calibration method...")
+        
+        H_list = self.zhangs_method_calibration()
+        if len(H_list) == 0:
+            self.get_logger().error("No valid homographies found!")
             return
-
-        data = {
-            "camera_matrix": camera_matrix.tolist(),
-            "distortion_coefficients": dist_coeffs.tolist(),
-            "image_width": self.image_size[0],
-            "image_height": self.image_size[1],
+            
+        K = self.compute_intrinsics(H_list)
+        r1,r2,r3,t = self.get_r_t_vec(K, H_list)
+        
+        self.get_logger().info("ZHANG'S CALIBRATION RESULTS:")
+        self.get_logger().info(f"Camera matrix:\n{K}")
+        
+        # Create calibration.yaml file
+        calibration_data = {
+            'image_width': int(self.image_size[0]),
+            'image_height': int(self.image_size[1]),
+            'camera_name': 'basler_camera',
+            'camera_matrix': {
+                'rows': 3,
+                'cols': 3,
+                'data': K.flatten().tolist()
+            },
+            'distortion_model': 'plumb_bob',
+            'distortion_coefficients': {
+                'rows': 1,
+                'cols': 5,
+                'data': [0.0, 0.0, 0.0, 0.0, 0.0]  # Zhang's method doesn't compute distortion
+            },
+            'rectification_matrix': {
+                'rows': 3,
+                'cols': 3,
+                'data': np.eye(3).flatten().tolist()
+            },
+            'projection_matrix': {
+                'rows': 3,
+                'cols': 4,
+                'data': np.hstack([K, np.zeros((3,1))]).flatten().tolist()
+            }
         }
 
-        with open(self.save_path, "w") as f:
-            yaml.dump(data, f)
+        with open("calibration.yaml", "w") as f:
+            yaml.dump(calibration_data, f, default_flow_style=False)
 
-        self.get_logger().info(f"Saved manual calibration file to: {self.save_path}")
+        self.get_logger().info("Saved calibration to calibration.yaml")
         cv2.destroyAllWindows()
-
 
 def main(args=None):
     rclpy.init(args=args)
