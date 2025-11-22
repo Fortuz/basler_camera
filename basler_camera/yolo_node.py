@@ -25,8 +25,10 @@ class YoloNode(Node):
         self.process_every_n_frames = 2  # Process every 2nd frame for better performance
 
         # Load camera calibration
-        self.declare_parameter("calibration_file", "manual_camera.yaml")
+        self.declare_parameter("calibration_file", "camera_calibration.yaml")
+        self.declare_parameter("enable_undistortion", True)
         self.calibration_file = self.get_parameter("calibration_file").value
+        self.enable_undistortion = self.get_parameter("enable_undistortion").value
         self.camera_matrix = None
         self.dist_coeffs = None
         self.load_calibration()
@@ -81,9 +83,13 @@ class YoloNode(Node):
             cv_image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
             cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
             
-            # Apply camera calibration (undistort image)
-            if self.camera_matrix is not None and self.dist_coeffs is not None:
-                cv_image = cv2.undistort(cv_image, self.camera_matrix, self.dist_coeffs)
+            # Apply camera calibration (undistort image) if enabled
+            if self.enable_undistortion and self.camera_matrix is not None and self.dist_coeffs is not None:
+                # Safety check for extreme distortion coefficients
+                if abs(self.dist_coeffs[1]) > 50:  # k2 coefficient check
+                    self.get_logger().warn(f"Extreme distortion coefficient k2={self.dist_coeffs[1]:.1f} - skipping undistortion")
+                else:
+                    cv_image = cv2.undistort(cv_image, self.camera_matrix, self.dist_coeffs)
             
             canvas = cv_image.copy()
 
