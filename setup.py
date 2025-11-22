@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'basler_camera = basler_camera.camera_node:main',
             'calibration_node = basler_camera.calibration_node:main',
+            'yolo_node = basler_camera.yolo_node:main'
         ],
     },
 )
