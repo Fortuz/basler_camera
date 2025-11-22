@@ -20,7 +20,7 @@ class YoloNode(Node):
         # Subscribe to image topic
         self.subscriber = self.create_subscription(
             Image,
-            '/image_raw',
+            'camera/image_color',
             self.image_callback,
             10
         )
@@ -30,7 +30,8 @@ class YoloNode(Node):
     def image_callback(self, msg):
         try:
             # Convert ROS2 Image message to OpenCV format
-            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            cv_image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
+            cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
             canvas = cv_image.copy()
 
             # Run YOLO detection
