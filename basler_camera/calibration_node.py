@@ -5,6 +5,7 @@ from sensor_msgs.msg import Image
 import numpy as np
 import cv2
 import yaml
+import os
 
 class ManualCalibrationNode(Node):
     def __init__(self):
@@ -12,12 +13,12 @@ class ManualCalibrationNode(Node):
 
         # Parameters
         self.declare_parameter("topic", "/camera/image_color")
-        self.declare_parameter("save_path", "manual_camera.yaml")
+        self.declare_parameter("save_path", "manual_camera.yaml")  # saved in working directory
         self.declare_parameter("samples_required", 5)  # number of frames to calibrate
         self.declare_parameter("min_points", 4)        # minimum points per frame
 
         self.topic = self.get_parameter("topic").value
-        self.save_path = self.get_parameter("save_path").value
+        self.save_path = os.path.join(os.getcwd(), self.get_parameter("save_path").value)
         self.samples_required = self.get_parameter("samples_required").value
         self.min_points = self.get_parameter("min_points").value
 
@@ -47,8 +48,12 @@ class ManualCalibrationNode(Node):
         return None
 
     def image_callback(self, msg: Image):
-        # Convert ROS Image to NumPy array
+        # Convert ROS Image to NumPy array (RGB)
         img = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, 3)
+
+        # Convert RGB -> BGR for correct OpenCV display
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
         if self.image_size is None:
             self.image_size = (msg.width, msg.height)
 

@@ -36,11 +36,9 @@ class BaslerCameraNode(Node):
             if grab.GrabSucceeded():
                 img = grab.Array  # numpy array in BGR format
 
-                # CONVERT BGR → RGB
-                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
                 # Publish as rgb8
-                msg = self.bridge.cv2_to_imgmsg(img_rgb, encoding="rgb8")
+                msg = self.bridge.cv2_to_imgmsg(img, encoding="rgb8")
                 self.publisher_.publish(msg)
         else:
             self.get_logger().warn("Camera not grabbing!")

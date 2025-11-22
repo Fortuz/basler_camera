@@ -14,8 +14,9 @@ class YoloNode(Node):
         super().__init__('yolo_node')
 
         # Load YOLOv11n finetuned model
-        self.model = YOLO('./resource/model_best.pt')
+        self.model = YOLO('src/basler_camera/resource/model_best.pt')
 
+        self.model.to('cuda')  # Use GPU for inference
         # Initialize CvBridge for ROS2 image conversion
         self.bridge = CvBridge()
 
