@@ -86,8 +86,9 @@ class YoloNode(Node):
             # Apply camera calibration (undistort image) if enabled
             if self.enable_undistortion and self.camera_matrix is not None and self.dist_coeffs is not None:
                 # Safety check for extreme distortion coefficients
-                if abs(self.dist_coeffs[1]) > 50:  # k2 coefficient check
-                    self.get_logger().warn(f"Extreme distortion coefficient k2={self.dist_coeffs[1]:.1f} - skipping undistortion")
+                dist_flat = self.dist_coeffs.flatten()
+                if len(dist_flat) > 1 and abs(dist_flat[1]) > 50:  # k2 coefficient check
+                    self.get_logger().warn(f"Extreme distortion coefficient k2={dist_flat[1]:.1f} - skipping undistortion")
                 else:
                     cv_image = cv2.undistort(cv_image, self.camera_matrix, self.dist_coeffs)
             
