@@ -6,6 +6,8 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 from pypylon import pylon
+import yaml
+import os
 
 class YoloNode(Node):
     def __init__(self):
@@ -17,6 +19,13 @@ class YoloNode(Node):
         # Initialize CvBridge for ROS2 image conversion
         self.bridge = CvBridge()
 
+        # Load camera calibration
+        self.declare_parameter("calibration_file", "manual_camera.yaml")
+        self.calibration_file = self.get_parameter("calibration_file").value
+        self.camera_matrix = None
+        self.dist_coeffs = None
+        self.load_calibration()
+
         # Subscribe to image topic
         self.subscriber = self.create_subscription(
             Image,
@@ -27,11 +36,35 @@ class YoloNode(Node):
 
         self.get_logger().info("YOLO Node started and waiting for images.")
 
+    def load_calibration(self):
+        try:
+            if os.path.exists(self.calibration_file):
+                with open(self.calibration_file, 'r') as f:
+                    calib_data = yaml.safe_load(f)
+                
+                self.camera_matrix = np.array(calib_data['camera_matrix'], dtype=np.float32)
+                self.dist_coeffs = np.array(calib_data['distortion_coefficients'], dtype=np.float32)
+                
+                self.get_logger().info(f"Loaded calibration from {self.calibration_file}")
+                self.get_logger().info(f"Camera matrix: {self.camera_matrix}")
+                self.get_logger().info(f"Distortion coeffs: {self.dist_coeffs}")
+            else:
+                self.get_logger().warn(f"Calibration file {self.calibration_file} not found. Running without undistortion.")
+        except Exception as e:
+            self.get_logger().error(f"Failed to load calibration: {e}")
+            self.camera_matrix = None
+            self.dist_coeffs = None
+
     def image_callback(self, msg):
         try:
             # Convert ROS2 Image message to OpenCV format
             cv_image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
             cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
+            
+            # Apply camera calibration (undistort image)
+            if self.camera_matrix is not None and self.dist_coeffs is not None:
+                cv_image = cv2.undistort(cv_image, self.camera_matrix, self.dist_coeffs)
+            
             canvas = cv_image.copy()
 
             # Run YOLO detection
