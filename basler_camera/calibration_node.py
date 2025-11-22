@@ -44,7 +44,13 @@ class ManualCalibrationNode(Node):
 
     def get_corner_chessboard(self, image, chessboard_dim):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        ret, corners = cv2.findChessboardCorners(gray, chessboard_dim, None)
+        
+        # Apply same preprocessing as in main detection
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        gray = cv2.equalizeHist(gray)
+        
+        flags = cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE + cv2.CALIB_CB_FILTER_QUADS
+        ret, corners = cv2.findChessboardCorners(gray, chessboard_dim, flags)
         if ret:
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
             corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
@@ -61,9 +67,16 @@ class ManualCalibrationNode(Node):
         if self.image_size is None:
             self.image_size = (msg.width, msg.height)
 
-        # Check for chessboard
+        # Check for chessboard with improved detection
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        ret, corners = cv2.findChessboardCorners(gray, self.chessboard_dim, None)
+        
+        # Apply image preprocessing for better corner detection
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        gray = cv2.equalizeHist(gray)
+        
+        # Use adaptive flags for better detection
+        flags = cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE + cv2.CALIB_CB_FILTER_QUADS
+        ret, corners = cv2.findChessboardCorners(gray, self.chessboard_dim, flags)
         
         # Convert to grayscale for display (calibration works better with grayscale visualization)
         display_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
