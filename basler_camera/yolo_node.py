@@ -25,7 +25,7 @@ class YoloNode(Node):
         self.process_every_n_frames = 2  # Process every 2nd frame for better performance
 
         # Load camera calibration
-        self.declare_parameter("calibration_file", "calibration.yaml")
+        self.declare_parameter("calibration_file", "manual_camera.yaml")
         self.calibration_file = self.get_parameter("calibration_file").value
         self.camera_matrix = None
         self.dist_coeffs = None
