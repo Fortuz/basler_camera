@@ -13,7 +13,7 @@ class ManualCalibrationNode(Node):
         # Parameters
         self.declare_parameter("topic", "/camera/image_color")
         self.declare_parameter("save_path", "manual_camera.yaml")
-        self.declare_parameter("samples_required", 8)  # number of frames to calibrate
+        self.declare_parameter("samples_required", 5)  # number of frames to calibrate
         self.declare_parameter("min_points", 4)        # minimum points per frame
         self.declare_parameter("pattern_width", 210.0)  # A4 paper width in mm
         self.declare_parameter("pattern_height", 297.0) # A4 paper height in mm
@@ -91,7 +91,9 @@ class ManualCalibrationNode(Node):
             ], dtype=np.float32)
 
             self.objpoints_list.append(objpoints)
-            self.imgpoints_list.append(np.array(self.click_points, dtype=np.float32))
+            # Ensure image points are in correct format for OpenCV
+            imgpoints = np.array(self.click_points, dtype=np.float32).reshape(-1, 1, 2)
+            self.imgpoints_list.append(imgpoints)
             self.sample_count += 1
             self.get_logger().info(f"Saved sample {self.sample_count}/{self.samples_required}")
 
