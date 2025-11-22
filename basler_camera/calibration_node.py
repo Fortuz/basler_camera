@@ -31,9 +31,13 @@ class ManualCalibrationNode(Node):
         self.image_size = None
         self.chessboard_dim = (9, 10)
         self.cell_size = 0.025  # 25mm squares
+        
+        # Performance optimization
+        self.frame_skip_count = 0
+        self.process_every_n_frames = 30  # Process every 3rd frame for better performance
 
         # GUI setup
-        cv2.namedWindow("Zhang Calibration")
+        cv2.namedWindow("Zhang Calibration", cv2.WINDOW_AUTOSIZE)
 
         self.get_logger().info("Zhang calibration node started. Press 'n' to capture chessboard images.")
 
@@ -61,8 +65,10 @@ class ManualCalibrationNode(Node):
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         ret, corners = cv2.findChessboardCorners(gray, self.chessboard_dim, None)
         
-        # Display image
-        display_img = img_bgr.copy()
+        # Convert to grayscale for display (calibration works better with grayscale visualization)
+        display_img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        display_img = cv2.cvtColor(display_img, cv2.COLOR_GRAY2BGR)  # Convert back to 3-channel for colored text
+        
         if ret:
             cv2.drawChessboardCorners(display_img, self.chessboard_dim, corners, ret)
             cv2.putText(display_img, f"Chessboard detected! Press 'n' to capture ({self.sample_count}/{self.samples_required})", 

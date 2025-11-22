@@ -19,6 +19,10 @@ class YoloNode(Node):
         self.model.to('cuda')  # Use GPU for inference
         # Initialize CvBridge for ROS2 image conversion
         self.bridge = CvBridge()
+        
+        # Performance optimization
+        self.frame_skip_count = 0
+        self.process_every_n_frames = 2  # Process every 2nd frame for better performance
 
         # Load camera calibration
         self.declare_parameter("calibration_file", "calibration.yaml")
@@ -68,6 +72,11 @@ class YoloNode(Node):
 
     def image_callback(self, msg):
         try:
+            # Skip frames for better performance
+            self.frame_skip_count += 1
+            if self.frame_skip_count % self.process_every_n_frames != 0:
+                return
+            
             # Convert ROS2 Image message to OpenCV format
             cv_image = self.bridge.imgmsg_to_cv2(msg, "rgb8")
             cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
