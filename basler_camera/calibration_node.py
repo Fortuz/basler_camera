@@ -58,11 +58,11 @@ class ManualCalibrationNode(Node):
             self.image_size = (msg.width, msg.height)
 
         # Check for chessboard
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         ret, corners = cv2.findChessboardCorners(gray, self.chessboard_dim, None)
         
         # Display image
-        display_img = img.copy()
+        display_img = img_bgr.copy()
         if ret:
             cv2.drawChessboardCorners(display_img, self.chessboard_dim, corners, ret)
             cv2.putText(display_img, f"Chessboard detected! Press 'n' to capture ({self.sample_count}/{self.samples_required})", 
