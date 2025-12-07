@@ -31,6 +31,7 @@ class YoloNode(Node):
         self.enable_undistortion = self.get_parameter("enable_undistortion").value
         self.camera_matrix = None
         self.dist_coeffs = None
+        self.opt_camera_matrix = None
         self.load_calibration()
 
         # Subscribe to image topic
@@ -49,14 +50,22 @@ class YoloNode(Node):
                 with open(self.calibration_file, 'r') as f:
                     calib_data = yaml.safe_load(f)
                 
-                # Handle new ROS camera_info format from Zhang's calibration
                 if 'camera_matrix' in calib_data and isinstance(calib_data['camera_matrix'], dict):
-                    # New format with rows, cols, data structure
                     camera_data = calib_data['camera_matrix']['data']
                     self.camera_matrix = np.array(camera_data, dtype=np.float32).reshape(3, 3)
                     
                     distortion_data = calib_data['distortion_coefficients']['data']
                     self.dist_coeffs = np.array(distortion_data, dtype=np.float32)
+                    
+                    w = calib_data['image_width']
+                    h = calib_data['image_height']
+
+                    new_k, _ = cv2.getOptimalNewCameraMatrix(self.camera_matrix, self.dist_coeffs, (w, h), 0, (w, h))
+
+                    self.get_logger().info(f"New camera matrix:\n{self.camera_matrix}")
+                    self.get_logger().info(f"New distortion coeffs: {self.dist_coeffs}")
+                    self.opt_camera_matrix = new_k
+
                 else:
                     # Old format - direct arrays
                     self.camera_matrix = np.array(calib_data['camera_matrix'], dtype=np.float32)
@@ -86,16 +95,18 @@ class YoloNode(Node):
             # Apply camera calibration (undistort image) if enabled
             if self.enable_undistortion and self.camera_matrix is not None and self.dist_coeffs is not None:
                 # Safety check for extreme distortion coefficients
-                dist_flat = self.dist_coeffs.flatten()
-                if len(dist_flat) > 1 and abs(dist_flat[1]) > 50:  # k2 coefficient check
-                    self.get_logger().warn(f"Extreme distortion coefficient k2={dist_flat[1]:.1f} - skipping undistortion")
-                else:
-                    cv_image = cv2.undistort(cv_image, self.camera_matrix, self.dist_coeffs)
-            
-            canvas = cv_image.copy()
+                # dist_flat = self.dist_coeffs.flatten()
+                # if len(dist_flat) > 1 and abs(dist_flat[1]) > 50:  # k2 coefficient check
+                #     self.get_logger().warn(f"Extreme distortion coefficient k2={dist_flat[1]:.1f} - skipping undistortion")
+                # else:
+                #     cv_image = cv2.undistort(cv_image, self.camera_matrix, self.dist_coeffs)
+                img_undist = cv2.undistort(cv_image, self.camera_matrix, self.dist_coeffs, None, self.opt_camera_matrix)
+                canvas = img_undist.copy()
+            else:
+                canvas = cv_image.copy()
 
             # Run YOLO detection
-            results = self.model(cv_image)
+            results = self.model(canvas)
 
             # Process results
             for result in results:
