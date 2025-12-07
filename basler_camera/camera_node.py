@@ -17,7 +17,6 @@ class BaslerCameraNode(Node):
         self.camera = pylon.InstantCamera(pylon.TlFactory.GetInstance().CreateFirstDevice())
         self.camera.Open()
 
-        # FORCE COLOR MODE (RGB8)
         try:
             self.camera.PixelFormat.SetValue("RGB8")
             self.get_logger().info("Pixel format set to RGB8")

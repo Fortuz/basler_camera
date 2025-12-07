@@ -111,46 +111,6 @@ class YoloNode(Node):
 
                     self.get_logger().info(f"MecanumBot orientation: {yaw_deg:.1f}° (Z-axis yaw)")
 
-        # Estimate human orientation using bounding box geometry
-        for human_class in ['HumanNormal', 'HumanOwner']:
-            if human_class in detected_objects:
-                for human_idx, human in enumerate(detected_objects[human_class]):
-                   
-                    bbox = human['bbox']
-                    center_x, center_y = human['center']
-                    width, height = human['size']
-
-                    # Simple heuristic: assume human faces the camera
-                    # Offset from image center gives rough facing direction
-                    # If human is to the left, they might be facing right (positive X)
-                    # This is a simplified estimate - would need pose detection for accuracy
-
-                    # For now, estimate facing angle based on horizontal position
-                    # Assume humans generally face toward camera center
-                    image_center_x = canvas.shape[1] / 2
-                    offset_x = center_x - image_center_x
-
-                    # Estimate yaw: if person is left of center, facing right (~0°)
-                    # if right of center, facing left (~180°)
-                    if abs(offset_x) > 50:  # Significant offset
-                        yaw_deg = 0.0 if offset_x < 0 else 180.0
-                    else:  # Near center, assume facing camera
-                        yaw_deg = 90.0  # Perpendicular to camera
-
-                    tracking_data[human_class][human_idx]['position']['z'] = yaw_deg
-
-                    # Draw estimated orientation
-                    h_center = (int(center_x), int(center_y))
-                    arrow_length = 40
-                    arrow_end_x = int(center_x + arrow_length * np.cos(np.radians(yaw_deg)))
-                    arrow_end_y = int(center_y + arrow_length * np.sin(np.radians(yaw_deg)))
-                    cv2.arrowedLine(canvas, h_center, (arrow_end_x, arrow_end_y),
-                                   (255, 165, 0), 2, tipLength=0.3)
-
-                    cv2.putText(canvas, f"~{yaw_deg:.0f}°",
-                               (h_center[0] + 10, h_center[1] - 20),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0), 2)
-
         return tracking_data
 
     def load_calibration(self):
