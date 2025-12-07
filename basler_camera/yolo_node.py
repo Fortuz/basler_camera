@@ -37,6 +37,8 @@ class YoloNode(Node):
         self.load_calibration()
         self.labels = ['HumanNormal', 'HumanOwner', 'Mecanumbot', 'MecanumbotHead', 'TennisBall']
 
+        # Store previous tracking data for objects that are not visible
+        self.previous_tracking_data = {}
 
         # Subscribe to image topic
         self.subscriber = self.create_subscription(
@@ -223,10 +225,75 @@ class YoloNode(Node):
             # Calculate orientation for MecanumBot using MecanumHead
             tracking_data = self.process_tracking_data(detected_objects, canvas)
 
-            # Publish tracking data
-            if tracking_data:
+            # Merge with previous tracking data for objects that are not currently visible
+            # Start with previous data (all marked as not visible)
+            merged_tracking_data = {}
+            for class_name, objs in self.previous_tracking_data.items():
+                if class_name != 'MecanumbotHead':
+                    merged_tracking_data[class_name] = []
+                    for obj in objs:
+                        obj_copy = obj.copy()
+                        obj_copy['visible'] = False
+                        merged_tracking_data[class_name].append(obj_copy)
+
+            # Update with currently visible objects
+            for class_name, objs in tracking_data.items():
+                if class_name != 'MecanumbotHead':
+                    merged_tracking_data[class_name] = objs
+
+            # Store current tracking data for next frame
+            self.previous_tracking_data = tracking_data.copy()
+
+            # Draw tracking data table on canvas (excluding MecanumHead)
+            if merged_tracking_data:
+                table_x = 10
+                table_y = 30
+                line_height = 25
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                thickness = 1
+
+                # Draw semi-transparent background for table
+                overlay = canvas.copy()
+                table_height = sum(len(objs) for name, objs in merged_tracking_data.items() if name != 'MecanumbotHead') * line_height + 60
+                cv2.rectangle(overlay, (5, 5), (450, min(table_height, canvas.shape[0] - 10)), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.6, canvas, 0.4, 0, canvas)
+
+                # Draw header
+                cv2.putText(canvas, "Object Tracking Data", (table_x, table_y), font, 0.6, (255, 255, 255), 2)
+                table_y += line_height + 5
+
+                # Draw data for each object (excluding MecanumHead)
+                for class_name, objects in merged_tracking_data.items():
+                    if class_name == 'MecanumbotHead':
+                        continue
+
+                    for idx, obj in enumerate(objects):
+                        # Object name
+                        cv2.putText(canvas, f"{class_name} #{idx + 1}:",
+                                   (table_x, table_y), font, font_scale, (0, 255, 255), thickness)
+                        table_y += line_height
+
+                        # Position
+                        pos_text = f"  Pos: ({obj['position']['x']:.1f}, {obj['position']['y']:.1f})"
+                        cv2.putText(canvas, pos_text, (table_x, table_y), font, font_scale, (255, 255, 255), thickness)
+                        table_y += line_height
+
+                        # Orientation
+                        ori_text = f"  Ori: {obj['position']['z']:.1f} deg"
+                        cv2.putText(canvas, ori_text, (table_x, table_y), font, font_scale, (255, 255, 255), thickness)
+                        table_y += line_height
+
+                        # Visible
+                        visible_color = (0, 255, 0) if obj['visible'] else (0, 0, 255)
+                        vis_text = f"  Visible: {obj['visible']}"
+                        cv2.putText(canvas, vis_text, (table_x, table_y), font, font_scale, visible_color, thickness)
+                        table_y += line_height + 5
+
+            # Publish tracking data (use merged data)
+            if merged_tracking_data:
                 msg = String()
-                msg.data = json.dumps(tracking_data, indent=2)
+                msg.data = json.dumps(merged_tracking_data, indent=2)
                 self.tracking_publisher.publish(msg)
 
             # Display the result

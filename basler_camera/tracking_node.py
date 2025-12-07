@@ -8,8 +8,9 @@ class TrackingNode(Node):
     def __init__(self):
         super().__init__('tracking_node')
 
-        # Dictionary to store last known positions for each object class
+        # Dictionary to store last known positions and data for each object class
         self.last_positions = {}
+        self.last_confidence = {}
 
         # Subscribe to object tracking topic
         self.subscription = self.create_subscription(
