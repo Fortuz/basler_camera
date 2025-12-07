@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from std_msgs.msg import String
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -8,6 +9,7 @@ from ultralytics import YOLO
 from pypylon import pylon
 import yaml
 import os
+import json
 
 class YoloNode(Node):
     def __init__(self):
@@ -33,6 +35,8 @@ class YoloNode(Node):
         self.dist_coeffs = None
         self.opt_camera_matrix = None
         self.load_calibration()
+        self.labels = ['HumanNormal', 'HumanOwner', 'Mecanumbot', 'MecanumbotHead', 'TennisBall']
+
 
         # Subscribe to image topic
         self.subscriber = self.create_subscription(
@@ -42,7 +46,112 @@ class YoloNode(Node):
             10
         )
 
+        # Publisher for object tracking data
+        self.tracking_publisher = self.create_publisher(String, 'object_tracking', 10)
+
         self.get_logger().info("YOLO Node started and waiting for images.")
+
+    def process_tracking_data(self, detected_objects, canvas):
+        """Process detected objects and calculate position + orientation (Z as yaw)"""
+        tracking_data = {}
+
+        # Process each class
+        for class_name, objects in detected_objects.items():
+            for obj in objects:
+                obj_info = {
+                    'position': {
+                        'x': float(obj['center'][0]),
+                        'y': float(obj['center'][1]),
+                        'z': 0.0  # Default orientation (yaw angle)
+                    },
+                    'confidence': obj['confidence'],
+                    'visible': obj['visible']
+                }
+
+                # Add to tracking data
+                if class_name not in tracking_data:
+                    tracking_data[class_name] = []
+                tracking_data[class_name].append(obj_info)
+
+        # Calculate MecanumBot orientation using MecanumHead
+        if 'Mecanumbot' in detected_objects and 'MecanumbotHead' in detected_objects:
+            for bot_idx, bot in enumerate(detected_objects['Mecanumbot']):
+                # Find closest head to this bot
+                best_head = None
+                min_distance = float('inf')
+
+                for head in detected_objects['MecanumbotHead']:
+                    dx = head['center'][0] - bot['center'][0]
+                    dy = head['center'][1] - bot['center'][1]
+                    distance = np.sqrt(dx**2 + dy**2)
+
+                    if distance < min_distance:
+                        min_distance = distance
+                        best_head = head
+
+                if best_head is not None:
+                    # Calculate orientation (yaw angle in degrees)
+                    dx = best_head['center'][0] - bot['center'][0]
+                    dy = best_head['center'][1] - bot['center'][1]
+                    yaw_rad = np.arctan2(dy, dx)
+                    yaw_deg = float(np.degrees(yaw_rad))
+
+                    # Update the bot's Z orientation
+                    tracking_data['Mecanumbot'][bot_idx]['position']['z'] = yaw_deg
+
+                    # Draw orientation arrow on canvas
+                    bot_center = (int(bot['center'][0]), int(bot['center'][1]))
+                    head_center = (int(best_head['center'][0]), int(best_head['center'][1]))
+                    cv2.arrowedLine(canvas, bot_center, head_center, (255, 0, 255), 3, tipLength=0.3)
+
+                    # Draw orientation angle text
+                    cv2.putText(canvas, f"Yaw: {yaw_deg:.1f}°",
+                               (bot_center[0] + 10, bot_center[1] + 30),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+
+                    self.get_logger().info(f"MecanumBot orientation: {yaw_deg:.1f}° (Z-axis yaw)")
+
+        # Estimate human orientation using bounding box geometry
+        for human_class in ['HumanNormal', 'HumanOwner']:
+            if human_class in detected_objects:
+                for human_idx, human in enumerate(detected_objects[human_class]):
+                   
+                    bbox = human['bbox']
+                    center_x, center_y = human['center']
+                    width, height = human['size']
+
+                    # Simple heuristic: assume human faces the camera
+                    # Offset from image center gives rough facing direction
+                    # If human is to the left, they might be facing right (positive X)
+                    # This is a simplified estimate - would need pose detection for accuracy
+
+                    # For now, estimate facing angle based on horizontal position
+                    # Assume humans generally face toward camera center
+                    image_center_x = canvas.shape[1] / 2
+                    offset_x = center_x - image_center_x
+
+                    # Estimate yaw: if person is left of center, facing right (~0°)
+                    # if right of center, facing left (~180°)
+                    if abs(offset_x) > 50:  # Significant offset
+                        yaw_deg = 0.0 if offset_x < 0 else 180.0
+                    else:  # Near center, assume facing camera
+                        yaw_deg = 90.0  # Perpendicular to camera
+
+                    tracking_data[human_class][human_idx]['position']['z'] = yaw_deg
+
+                    # Draw estimated orientation
+                    h_center = (int(center_x), int(center_y))
+                    arrow_length = 40
+                    arrow_end_x = int(center_x + arrow_length * np.cos(np.radians(yaw_deg)))
+                    arrow_end_y = int(center_y + arrow_length * np.sin(np.radians(yaw_deg)))
+                    cv2.arrowedLine(canvas, h_center, (arrow_end_x, arrow_end_y),
+                                   (255, 165, 0), 2, tipLength=0.3)
+
+                    cv2.putText(canvas, f"~{yaw_deg:.0f}°",
+                               (h_center[0] + 10, h_center[1] - 20),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0), 2)
+
+        return tracking_data
 
     def load_calibration(self):
         try:
@@ -94,12 +203,6 @@ class YoloNode(Node):
             
             # Apply camera calibration (undistort image) if enabled
             if self.enable_undistortion and self.camera_matrix is not None and self.dist_coeffs is not None:
-                # Safety check for extreme distortion coefficients
-                # dist_flat = self.dist_coeffs.flatten()
-                # if len(dist_flat) > 1 and abs(dist_flat[1]) > 50:  # k2 coefficient check
-                #     self.get_logger().warn(f"Extreme distortion coefficient k2={dist_flat[1]:.1f} - skipping undistortion")
-                # else:
-                #     cv_image = cv2.undistort(cv_image, self.camera_matrix, self.dist_coeffs)
                 img_undist = cv2.undistort(cv_image, self.camera_matrix, self.dist_coeffs, None, self.opt_camera_matrix)
                 canvas = img_undist.copy()
             else:
@@ -108,74 +211,63 @@ class YoloNode(Node):
             # Run YOLO detection
             results = self.model(canvas)
 
+            # Track detected objects for orientation calculation
+            detected_objects = {}
+
             # Process results
             for result in results:
-                # Check if we have keypoints (for pose detection)
-                if hasattr(result, 'keypoints') and result.keypoints is not None:
-                    keypoints = result.keypoints.xy
-                    if keypoints is not None and len(keypoints) > 0:
-                        for idx, robot in enumerate(keypoints):
-                            robot = robot.cpu().numpy()
 
-                            if len(robot) < 4:
-                                continue
+                boxes = result.boxes
+                for idx, box in enumerate(boxes):
+                    # Get bounding box coordinates
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    confidence = box.conf[0].cpu().numpy()
+                    class_id = int(box.cls[0].cpu().numpy())
 
-                            points = np.array([
-                                robot[0],  # FL
-                                robot[1],  # FR
-                                robot[2],  # BR
-                                robot[3],  # BL
-                            ], dtype=np.float32)
+                    # Calculate center and dimensions
+                    center_x = (x1 + x2) / 2
+                    center_y = (y1 + y2) / 2
+                    width = x2 - x1
+                    height = y2 - y1
 
-                            points_int = points.astype(int)
+                    # Store detected object data
+                    class_name = self.labels[class_id]
+                    obj_data = {
+                        'class_id': class_id,
+                        'class_name': class_name,
+                        'confidence': float(confidence),
+                        'center': (center_x, center_y),
+                        'bbox': (x1, y1, x2, y2),
+                        'size': (width, height),
+                        'visible': True
+                    }
 
-                            # Log keypoint positions
-                            self.get_logger().info(f"Robot {idx}: FL=({points[0][0]:.1f},{points[0][1]:.1f}), "
-                                                 f"FR=({points[1][0]:.1f},{points[1][1]:.1f}), "
-                                                 f"BR=({points[2][0]:.1f},{points[2][1]:.1f}), "
-                                                 f"BL=({points[3][0]:.1f},{points[3][1]:.1f})")
+                    if class_name not in detected_objects:
+                        detected_objects[class_name] = []
+                    detected_objects[class_name].append(obj_data)
 
-                            # Draw bounding lines
-                            for i in range(4):
-                                cv2.line(canvas, tuple(points_int[i]),
-                                         tuple(points_int[(i + 1) % 4]), (100, 255, 100), 2)
+                    # Log object position and details
+                    self.get_logger().info(f"Object {idx}: Class={class_name}, Conf={confidence:.3f}, "
+                                            f"Center=({center_x:.1f},{center_y:.1f}), "
+                                            f"BBox=({x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}), "
+                                            f"Size=({width:.1f}x{height:.1f})")
 
-                            # Draw keypoints
-                            point_names = ['FL', 'FR', 'BR', 'BL']
-                            point_colors = [(0, 0, 255), (0, 255, 0), (0, 255, 0), (0, 0, 255)]
-                            for i, pt in enumerate(points_int):
-                                cv2.circle(canvas, tuple(pt), 6, point_colors[i], -1)
-                                cv2.putText(canvas, point_names[i], tuple(pt + [6, -6]),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, point_colors[i], 2)
+                    # Draw bounding box
+                    cv2.rectangle(canvas, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
 
-                # Handle regular object detection (bounding boxes)
-                elif hasattr(result, 'boxes') and result.boxes is not None:
-                    boxes = result.boxes
-                    for idx, box in enumerate(boxes):
-                        # Get bounding box coordinates
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        confidence = box.conf[0].cpu().numpy()
-                        class_id = int(box.cls[0].cpu().numpy())
-                        
-                        # Calculate center and dimensions
-                        center_x = (x1 + x2) / 2
-                        center_y = (y1 + y2) / 2
-                        width = x2 - x1
-                        height = y2 - y1
-                        
-                        # Log object position and details
-                        self.get_logger().info(f"Object {idx}: Class={class_id}, Conf={confidence:.3f}, "
-                                             f"Center=({center_x:.1f},{center_y:.1f}), "
-                                             f"BBox=({x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}), "
-                                             f"Size=({width:.1f}x{height:.1f})")
-                        
-                        # Draw bounding box
-                        cv2.rectangle(canvas, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                        
-                        # Draw confidence and class
-                        label = f"Class {class_id}: {confidence:.2f}"
-                        cv2.putText(canvas, label, (int(x1), int(y1) - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    # Draw confidence and class
+                    label = f"{class_name}: {confidence:.2f}"
+                    cv2.putText(canvas, label, (int(x1), int(y1) - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+            # Calculate orientation for MecanumBot using MecanumHead
+            tracking_data = self.process_tracking_data(detected_objects, canvas)
+
+            # Publish tracking data
+            if tracking_data:
+                msg = String()
+                msg.data = json.dumps(tracking_data, indent=2)
+                self.tracking_publisher.publish(msg)
 
             # Display the result
             cv2.imshow("YOLO Detection", canvas)
