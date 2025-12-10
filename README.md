@@ -1,10 +1,13 @@
-# external_camera
+# External Camera Project
 
-Tasklist / Requirement
-- ROS2 pkg
-- Docker container setup
-- The package should provide a data structure including: robot position and orientaion, human owner position orientation, human stranger position orientation, toy position and a bool variable for each object is it tracked or not. If on object is not tracked keep the previously observed position and orientation.
-- Need to handle a Basler camara (connection, disconnection issues)
-- Clear Readme including: setup instructions on ubuntu without docker and on windows with docker, bring up commands on how to start the actual code, some user manual part: what does the code do and how it is implemented
-- Need to calibrate the camera to be alligned with the room
-- Maybe an additional metadata servic would be required, to help the robot syncronize the camera coordinate system
+This project focuses on using an external "Basler" camera to track the mecanumbot and different types of Humans may it be owner or a regular human and a toy, across a inclosded space
+The project is a 4 node project where we run the camera node , calibrate it , run the tracking node and use the yolo node for the full product
+
+# Usage
+
+At first we need to source our workspace and source ros
+We build the package : colcon build --packages-select basler_camera
+Run the camera node : ros2 run basler_camera camera_node  
+After that we can calibrate the camera using chessboard calibration running : ros2 run basler_camera chessboard_calibration_node
+To actually open the gui and track we use : ros2 run basler_camera yolo_node which runs a calibrated version of the camera, it detects five different classes
+Mecanumbot, Mecanumbothead (used for determining mecanumbot direction), HumanOwner, HumanNormal, TennisBall. Giving their coordinates in in realtime and giving a bool value based on if it's being tracked or not, these values are also displayed in realtime in the terminal.
